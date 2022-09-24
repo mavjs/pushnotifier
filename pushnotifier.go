@@ -36,10 +36,10 @@ type (
 	}
 
 	Device struct {
-		ID    string   `json:"id"`
-		Title string   `json:"title"`
-		Model string   `json:"model"`
-		Image *url.URL `json:"image"`
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Model string `json:"model"`
+		Image string `json:"image"`
 	}
 
 	serverResp struct {
@@ -89,7 +89,7 @@ func NewClient(httpClient *http.Client, packageName, token, appToken string) *Cl
 			PackageName:    packageName,
 			UserName:       "",
 			AppToken:       appToken,
-			AppTokenExpiry: 0,
+			AppTokenExpiry: -1,
 		}
 	}
 	return &Client{
@@ -166,6 +166,11 @@ func (c *Client) Login(username, password string) {
 }
 
 func (c *Client) shouldRefresh() bool {
+	// if we provided an appToken/APP_TOKEN to NewClient, that means we do not need to refresh token.
+	if c.AppTokenExpiry == -1 {
+		return false
+	}
+
 	timeNow := time.Now().UTC().Unix()
 
 	timeLeft := c.AppTokenExpiry - timeNow
