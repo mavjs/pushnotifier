@@ -3,7 +3,7 @@ package pushnotifier
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -73,7 +73,10 @@ func TestLogin(t *testing.T) {
 			return
 		}
 
-		reqBody, _ := ioutil.ReadAll(r.Body)
+		reqBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Log(err)
+		}
 		var user struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -107,7 +110,9 @@ func TestLogin(t *testing.T) {
 	pn := NewClient(nil, packageName, apiToken, "")
 	pn.BaseURL, _ = url.Parse(mockServer.URL)
 
-	pn.Login("aUser", "aUserPassword")
+	if err := pn.Login("aUser", "aUserPassword"); err != nil {
+		t.Error(err)
+	}
 
 	assert.Equal(wantAppToken, pn.AppToken, "[TestLogin] Expected wanted and recevied APP Token to be equal")
 }

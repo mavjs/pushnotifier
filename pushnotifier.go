@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -97,7 +98,8 @@ func (c *Client) request(method, resource string, formData io.Reader) (*http.Res
 		return nil, err
 	}
 
-	if c.shouldRefresh() {
+	// If resource does not contain and or is for "login", try refreshing
+	if !strings.Contains(resource, "login") && c.shouldRefresh() {
 		c.RefreshToken()
 	}
 
