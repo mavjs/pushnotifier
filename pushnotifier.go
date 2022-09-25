@@ -1,4 +1,4 @@
-// Package pushnotifier provides primitives for interactiving with the pushnotifier.de api.
+// Package pushnotifier provides primitives for interactiving with the pushnotifier.de API endpoints.
 package pushnotifier
 
 import (
@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -17,7 +16,7 @@ import (
 )
 
 type (
-	// Client represents a client interfact to the haveibeenpwned.com API.
+	// Client represents a client interface to the pushnotifier.de API endpoint and the necessary tokens for interaction.
 	Client struct {
 		client         *http.Client
 		APIToken       string
@@ -59,7 +58,8 @@ const (
 // 3) a package name
 //
 // Currently, the 1st argument will default to `http.DefaultClient` if no
-// arguments are given. For more information: https://api.pushnotifier.de/v2/doc/
+// arguments are given.
+// For more information on pushnotifier.de: https://api.pushnotifier.de/v2/doc/
 func NewClient(httpClient *http.Client, packageName, token, appToken string) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{}
@@ -114,7 +114,7 @@ func (c *Client) request(method, resource string, formData io.Reader) (*http.Res
 	}
 
 	if resp.StatusCode != 200 {
-		respBody, _ := ioutil.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(resp.Body)
 		defer resp.Body.Close()
 
 		return nil, fmt.Errorf("%v - %v", resp.Status, string(respBody))
@@ -430,7 +430,7 @@ func (c *Client) SendImage(contentFile string, devices []string, silent bool) er
 		return errors.New("[SendImage] given file size is greater than 5 MegaBytes (MB)")
 	}
 
-	fileRaw, err := ioutil.ReadFile(contentFile)
+	fileRaw, err := os.ReadFile(contentFile)
 	if err != nil {
 		return err
 	}
