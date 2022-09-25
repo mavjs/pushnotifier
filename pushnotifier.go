@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -42,30 +43,15 @@ type (
 		Image string `json:"image"`
 	}
 
-	serverResp struct {
-		Success []string `json:"success"`
-		Error   []string `json:"error"`
+	serverRespSuccess struct {
+		Success interface{} `json:"success"`
+		Error   []string    `json:"error"`
 	}
 )
 
 const (
 	endpoint = "https://api.pushnotifier.de/v2/"
 )
-
-/*
-var (
-	accountErrors = map[int]error{
-		403: errors.New("incorrect credentials"),
-		404: errors.New("user not found"),
-	}
-
-	notificationSendErrors = map[int]error{
-		400: errors.New("request is malformed, i.e. missing content, url, filename"),
-		404: errors.New("a device could not be found"),
-		413: errors.New("payload too large (> 5 MB)"),
-	}
-)
-*/
 
 // A NewClient creates a new PushNotifier API client. It expects 3 arguments
 // 1) a `http.Client`
@@ -90,6 +76,7 @@ func NewClient(httpClient *http.Client, packageName, token, appToken string) *Cl
 			UserName:       "",
 			AppToken:       appToken,
 			AppTokenExpiry: -1,
+			Devices:        make([]string, 0),
 		}
 	}
 	return &Client{
@@ -100,6 +87,7 @@ func NewClient(httpClient *http.Client, packageName, token, appToken string) *Cl
 		UserName:       "",
 		AppToken:       "",
 		AppTokenExpiry: 0,
+		Devices:        make([]string, 0),
 	}
 }
 
@@ -109,14 +97,16 @@ func (c *Client) request(method, resource string, formData io.Reader) (*http.Res
 		return nil, err
 	}
 
-	req.Header.Set("Accept", "application/json")
+	if c.shouldRefresh() {
+		c.RefreshToken()
+	}
+
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	if c.AppToken != "" {
 		req.Header.Set("X-AppToken", c.AppToken)
 	}
 
 	req.SetBasicAuth(c.PackageName, c.APIToken)
-
-	req.Close = true
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -124,14 +114,18 @@ func (c *Client) request(method, resource string, formData io.Reader) (*http.Res
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, errors.New(resp.Status)
+		respBody, _ := ioutil.ReadAll(resp.Body)
+		defer resp.Body.Close()
+
+		return nil, fmt.Errorf("%v - %v", resp.Status, string(respBody))
+
 	}
 
 	return resp, nil
 }
 
 // Login is used to login on behalf of a user. Logging in means to obtain a so-called "Appp Token" which is used to identify your requests.
-func (c *Client) Login(username, password string) {
+func (c *Client) Login(username, password string) error {
 	resource, err := c.BaseURL.Parse("login")
 	if err != nil {
 		log.Fatal(err)
@@ -146,23 +140,26 @@ func (c *Client) Login(username, password string) {
 
 	formData, err := json.Marshal(loginData)
 	if err != nil {
-		log.Fatal("[Login] unable to create form data to send")
+		return fmt.Errorf("[Login] unable to create form data to send: %v", err.Error())
 	}
 
 	resp, err := c.request("POST", resource.String(), bytes.NewBuffer(formData))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	defer resp.Body.Close()
 
 	var user *User
 	err = json.NewDecoder(resp.Body).Decode(&user)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("[Login] unable to decode response body as JSON: %v", err.Error())
 	}
 
 	c.AppToken = user.AppToken
 	c.AppTokenExpiry = user.ExpiresAt
 	log.Println("[Login] App Token for user obtained")
+
+	return nil
 }
 
 func (c *Client) shouldRefresh() bool {
@@ -180,33 +177,35 @@ func (c *Client) shouldRefresh() bool {
 }
 
 // RefreshToken is used to refresh your obtain App Token.
-func (c *Client) RefreshToken() {
+func (c *Client) RefreshToken() error {
 	resource, err := c.BaseURL.Parse("user/refresh")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	resp, err := c.request("GET", resource.String(), nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	var user *User
 	err = json.NewDecoder(resp.Body).Decode(&user)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("[RefreshToken] unable to decode response body as JSON: %v", err.Error())
 	}
 
 	c.AppToken = user.AppToken
 	c.AppTokenExpiry = user.ExpiresAt
 	log.Println("[RefreshToken] App Token for user obtained")
+
+	return nil
 }
 
 // GetDevices get all devices a user has registered and that are available for sending.
-func (c *Client) GetDevices() {
+func (c *Client) GetDevices() error {
 	resource, err := c.BaseURL.Parse("devices")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if c.shouldRefresh() {
@@ -215,37 +214,42 @@ func (c *Client) GetDevices() {
 
 	resp, err := c.request("GET", resource.String(), nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	var devices *[]Device
 	err = json.NewDecoder(resp.Body).Decode(&devices)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("[GetDevices] unable to decode response body as JSON: %v", err.Error())
 	}
 
-	// Append obtained devices' IDs to the Client struct for future use.
+	log.Println("[GetDevices] Registered devices for user obtained")
+
+	// Append obtained devices' IDs to the Client struct for future use and print to user with full details.
+	// TODO: Append full metadata of devices, however, during sending notification to all devices just have a internal function that creates a slice of IDs.
 	for _, device := range *devices {
 		c.Devices = append(c.Devices, device.ID)
 	}
 
-	log.Println("[GetDevices] Registered devices for user obtained")
-	log.Printf("%#v", devices)
+	return nil
 }
 
 // SendText sends a notification to all registered clients with a simple text.
-func (c *Client) SendText(content string, silent bool) {
-	resource, err := c.BaseURL.Parse("notitification/text")
+func (c *Client) SendText(content string, devices []string, silent bool) error {
+	resource, err := c.BaseURL.Parse("notifications/text")
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	if c.shouldRefresh() {
-		c.RefreshToken()
+		return err
 	}
 
 	if content == "" {
-		log.Fatalln("[SendText] Requires content to send as notification")
+		return errors.New("[SendText] content to send as notification was empty")
+	}
+
+	if len(c.Devices) == 0 && len(devices) == 0 {
+		log.Println("[SendText] No devices given. Acquring devices...")
+		c.GetDevices()
+		devices = append(devices, c.Devices...)
+		log.Println(devices)
 	}
 
 	sendData := struct {
@@ -253,84 +257,90 @@ func (c *Client) SendText(content string, silent bool) {
 		Content string   `json:"content"`
 		Silent  bool     `json:"silent"`
 	}{
-		Devices: c.Devices,
+		Devices: devices,
 		Content: content,
 		Silent:  silent,
 	}
 
 	formData, err := json.Marshal(sendData)
 	if err != nil {
-		log.Fatal("[SendText] unable to create form data to send")
+		return errors.New("[SendText] unable to create form data to send")
 	}
 
 	resp, err := c.request("PUT", resource.String(), bytes.NewBuffer(formData))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	var sResp serverResp
+	var sResp serverRespSuccess
 	err = json.NewDecoder(resp.Body).Decode(&sResp)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("[SendText] unable to decode response body as JSON: %v", err.Error())
 	}
 
 	log.Println("[SendText]", sResp.Success)
+
+	return nil
 }
 
 // SendURL sends a notification to all registered clients with a URL.
-func (c *Client) SendURL(contentURL string, silent bool) {
-	resource, err := c.BaseURL.Parse("notitification/text")
+func (c *Client) SendURL(contentURL string, devices []string, silent bool) error {
+	resource, err := c.BaseURL.Parse("notifications/url")
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	if c.shouldRefresh() {
-		c.RefreshToken()
+		return err
 	}
 
 	if contentURL == "" {
-		log.Fatalln("[SendURL] Requires content to send as notification")
+		return errors.New("[SendURL] content URL to send as notification was empty")
 	}
 
 	parsedContentURL, err := url.Parse(contentURL)
 	if err != nil {
-		log.Fatal(err)
+		return err
+	}
+
+	if len(c.Devices) == 0 && devices == nil {
+		log.Println("[SendURL] No devices given. Acquring devices...")
+		c.GetDevices()
+		copy(devices, c.Devices)
 	}
 
 	sendData := struct {
 		Devices []string `json:"devices"`
-		URL     *url.URL `json:"url"`
+		URL     string   `json:"url"`
 		Silent  bool     `json:"silent"`
 	}{
-		Devices: c.Devices,
-		URL:     parsedContentURL,
+		Devices: devices,
+		URL:     parsedContentURL.String(),
 		Silent:  silent,
 	}
 
 	formData, err := json.Marshal(sendData)
 	if err != nil {
-		log.Fatal("[SendURL] unable to create form data to send")
+		return errors.New("[SendURL] unable to create form data to send")
 	}
 
 	resp, err := c.request("PUT", resource.String(), bytes.NewBuffer(formData))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	var sResp serverResp
+	var sResp serverRespSuccess
 	err = json.NewDecoder(resp.Body).Decode(&sResp)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("[SendURL] unable to decode response body as JSON: %v", err.Error())
 	}
 
 	log.Println("[SendText]", sResp.Success)
+
+	return nil
 }
 
 // SendNotification sends a notification to all registered clients with content or URL.
-func (c *Client) SendNotification(content, contentURL string, silent bool) {
-	resource, err := c.BaseURL.Parse("notitification/text")
+func (c *Client) SendNotification(content, contentURL string, devices []string, silent bool) error {
+	resource, err := c.BaseURL.Parse("notifications/notification")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if c.shouldRefresh() {
@@ -338,50 +348,58 @@ func (c *Client) SendNotification(content, contentURL string, silent bool) {
 	}
 
 	if content == "" || contentURL == "" {
-		log.Fatalln("[SendNotification] Requires content or url to send as notification")
+		return errors.New("[SendNotification] content text or URL to send as notification was empty")
 	}
 
 	parsedContentURL, err := url.Parse(contentURL)
 	if err != nil {
-		log.Fatal(err)
+		return err
+	}
+
+	if len(c.Devices) == 0 && devices == nil {
+		log.Println("[SendNotification] No devices given. Acquring devices...")
+		c.GetDevices()
+		copy(devices, c.Devices)
 	}
 
 	sendData := struct {
 		Devices []string `json:"devices"`
 		Content string   `json:"content"`
-		URL     *url.URL `json:"url"`
+		URL     string   `json:"url"`
 		Silent  bool     `json:"silent"`
 	}{
-		Devices: c.Devices,
+		Devices: devices,
 		Content: content,
-		URL:     parsedContentURL,
+		URL:     parsedContentURL.String(),
 		Silent:  silent,
 	}
 
 	formData, err := json.Marshal(sendData)
 	if err != nil {
-		log.Fatal("[SendNotification] unable to create form data to send")
+		return errors.New("[SendNotification] unable to create form data to send")
 	}
 
 	resp, err := c.request("PUT", resource.String(), bytes.NewBuffer(formData))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	var sResp serverResp
+	var sResp serverRespSuccess
 	err = json.NewDecoder(resp.Body).Decode(&sResp)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("[SendNotification] unable to decode response body as JSON: %v", err.Error())
 	}
 
 	log.Println("[SendNotification]", sResp.Success)
+
+	return nil
 }
 
 // SendImage sends a notification to all registered clients with an Image.
-func (c *Client) SendImage(contentFile string, silent bool) {
-	resource, err := c.BaseURL.Parse("notitification/text")
+func (c *Client) SendImage(contentFile string, devices []string, silent bool) error {
+	resource, err := c.BaseURL.Parse("notifications/image")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if c.shouldRefresh() {
@@ -389,34 +407,40 @@ func (c *Client) SendImage(contentFile string, silent bool) {
 	}
 
 	if contentFile == "" {
-		log.Fatalln("[SendNotification] Requires content or url to send as notification")
+		return errors.New("[SendImage] content image file path to send as notification was empty")
 	}
 
 	osStat, err := os.Stat(contentFile)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// check if file path exists or not
 	if os.IsNotExist(err) {
-		log.Fatal(err)
+		return err
 	}
 
 	// check if given path is to a file
 	if osStat.IsDir() {
-		log.Fatal(errors.New("given path is a directory and not a file"))
+		return errors.New("[SendImage] given image file path is a directory and not an actual file")
 	}
 
 	// check if file size is greater than 5_000_000 bytes or 5 Megabytes (MB)
 	if osStat.Size() > 5_000_000 {
-		log.Fatal(errors.New("file size is greater than 5 MegaBytes (MB)"))
+		return errors.New("[SendImage] given file size is greater than 5 MegaBytes (MB)")
 	}
 
 	fileRaw, err := ioutil.ReadFile(contentFile)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	encodedContent := base64.StdEncoding.EncodeToString(fileRaw)
+
+	if len(c.Devices) == 0 && devices == nil {
+		log.Println("[SendImage] No devices given. Acquring devices...")
+		c.GetDevices()
+		copy(devices, c.Devices)
+	}
 
 	sendData := struct {
 		Devices  []string `json:"devices"`
@@ -424,7 +448,7 @@ func (c *Client) SendImage(contentFile string, silent bool) {
 		Filename string   `json:"filename"`
 		Silent   bool     `json:"silent"`
 	}{
-		Devices:  c.Devices,
+		Devices:  devices,
 		Content:  encodedContent,
 		Filename: osStat.Name(),
 		Silent:   silent,
@@ -432,19 +456,21 @@ func (c *Client) SendImage(contentFile string, silent bool) {
 
 	formData, err := json.Marshal(sendData)
 	if err != nil {
-		log.Fatal("[SendImage] unable to create form data to send")
+		return errors.New("[SendImage] unable to create form data to send")
 	}
 
 	resp, err := c.request("PUT", resource.String(), bytes.NewBuffer(formData))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	var sResp serverResp
+	var sResp serverRespSuccess
 	err = json.NewDecoder(resp.Body).Decode(&sResp)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("[SendImage] unable to decode response body as JSON: %v", err.Error())
 	}
 
 	log.Println("[SendImage]", sResp.Success)
+
+	return nil
 }
