@@ -19,54 +19,41 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
-package config
+package cmd
 
 import (
+	"errors"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
+
+	"github.com/mavjs/pushnotifier"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-const (
-	projectName string = "pushnotifier"
-)
+// getdevicesCmd represents the getdevices command
+var getdevicesCmd = &cobra.Command{
+	Use:   "getdevices",
+	Short: "Get connected devices",
+	Long:  `Get connected devices to your account and show them for convenience and or later used for sending notifications.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		packageName := viper.GetString("PACKAGE_NAME")
+		apiToken := viper.GetString("API_TOKEN")
+		appToken := viper.GetString("APP_TOKEN")
 
-func GetConfigDirPath() (string, error) {
-	// Find $XDG_CONFIG_HOME directory.
-	UserConfigDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
+		if packageName == "" || apiToken == "" {
+			cobra.CheckErr(errors.New("no package name or api token can be found. please use `register` command to register"))
+		}
 
-	configDir := filepath.Join(UserConfigDir, projectName)
-	err = os.MkdirAll(configDir, 0700)
-	if err != nil {
-		return "", nil
-	}
+		pn := pushnotifier.NewClient(nil, packageName, apiToken, appToken)
 
-	return configDir, nil
+		pn.GetDevices()
+
+		for _, device := range pn.Devices {
+			fmt.Println(device)
+		}
+	},
 }
 
-func GetConfigFilePath() string {
-	configDir, err := GetConfigDirPath()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fileName := fmt.Sprintf("%s.yaml", projectName)
-	configFile := filepath.Join(configDir, fileName)
-
-	return configFile
-}
-
-func WriteToConfigFile(content []byte) error {
-	configFilePath := GetConfigFilePath()
-
-	err := os.WriteFile(configFilePath, content, 0600)
-	if err != nil {
-		return err
-	}
-
-	return nil
+func init() {
+	rootCmd.AddCommand(getdevicesCmd)
 }
