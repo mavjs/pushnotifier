@@ -1,4 +1,6 @@
 # PushNotifier (V2) for Go
+[![Go Tests](https://github.com/mavjs/pushnotifier/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/mavjs/pushnotifier/actions/workflows/go.yml)
+
 A go module to easily interact with the service of [PushNotifier](https://pushnotifier.de/) in your go projects.
 
 You can find the documentation on [pkg.go.dev](https://pkg.go.dev/github.com/mavjs/pushnotifier) 
